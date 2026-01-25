@@ -1,6 +1,6 @@
 from numpy import zeros, float64
 from numpy.typing import NDArray
-from ..signals.generators import Wave, samplesTotal
+from ..signals.generators import Wave, samplesForDuration
 from ..config import CONFIG
 
 
@@ -19,13 +19,12 @@ class TrackBuilder:
         self.items: list[TrackItem] = []
 
     def addItems(self, *items: TrackItem) -> None:
-        for item in items:
-            self.items.append(item)
+        self.items.extend(items)
 
     def build(self) -> NDArray[float64]:
         mostItem: TrackItem = max(self.items, key=lambda i: i.timeOffset + i.wave.duration)
         totalDuration: float = mostItem.timeOffset + mostItem.wave.duration
-        samplesAmt: int = samplesTotal(totalDuration, CONFIG.sampleRateF)
+        samplesAmt: int = samplesForDuration(totalDuration, CONFIG.sampleRateF)
         masterBuffer: NDArray[float64] = zeros(samplesAmt, float64)
         for item in self.items:
             idx: int = round(item.timeOffset * CONFIG.sampleRateF)

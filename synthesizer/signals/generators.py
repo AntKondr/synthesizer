@@ -1,4 +1,5 @@
 from typing import Final, Self
+from abc import ABC, abstractmethod
 from numpy import linspace, resize, abs, sin, pi, float64
 from numpy.typing import NDArray
 from ..config import F_DEFAULT_SAMPLE_RATE
@@ -13,12 +14,11 @@ MAX_ANGLE: Final[float] = 360.0
 
 
 class Phase:
-    # фаза
-    __slots__ = ("angle", "_rad", "_norm")
+    __slots__ = ("_angle", "_rad", "_norm")
 
     def __init__(self, angle: float = 0.0) -> None:
         # angle is: 0 -> 360
-        self.angle: float = self._angleNormalize(angle)
+        self._angle: float = self._angleNormalize(angle)
         self._rad: float | None = None
         self._norm: float | None = None
 
@@ -26,11 +26,21 @@ class Phase:
     def _angleNormalize(angle: float) -> float:
         return angle % MAX_ANGLE
 
+    def addAngle(self, angle: float) -> Self:
+        self._angle = self._angleNormalize(self._angle + angle)
+        self._rad = None
+        self._norm = None
+        return self
+
+    @property
+    def angle(self) -> float:
+        return self._angle
+
     @property
     def rad(self) -> float:
         # radian is: 0.0 -> 2pi
         if self._rad is None:
-            self._rad = self.angle * _1DEGREE
+            self._rad = self._angle * _1DEGREE
         return self._rad
 
     @property
@@ -40,29 +50,32 @@ class Phase:
             self._norm = self.rad / _2PI
         return self._norm
 
+    def __bool__(self) -> bool:
+        return bool(self._angle)
+
 
 def _periodDuration(freq: float) -> float:
-    # длительность одного периода, секунд
+    # 1 period duration, seconds
     return 1.0 / freq
 
 
 def _samplesPerPeriod(freq: float, sampleRate: float) -> int:
-    # количество сэмплов в одном периоде
+    # samples amount in 1 period
     return round(sampleRate / freq)
 
 
-def samplesTotal(duration: float, sampleRate: float) -> int:
-    # количество сэмплов всего
+def samplesForDuration(duration: float, sampleRate: float) -> int:
+    # samples amount for given duration
     return round(duration * sampleRate)
 
 
 def _periodsAmt(duration: float, freq: float) -> int:
-    # количество периодов всего
+    # periods amount of given frequency for given duration
     return round(duration * freq)
 
 
-class SinGen:
-    __slots__ = ("arr", "dur", "vol", "samplesAmt")
+class PeriodGenerator(ABC):
+    __slots__ = ("freq", "volume", "phase", "sampleRate", "samplesAmt", "duration")
 
     def __init__(
         self,
@@ -71,95 +84,81 @@ class SinGen:
         phase: Phase = Phase(),
         sampleRate: float = F_DEFAULT_SAMPLE_RATE
     ) -> None:
-        # Генерируем один период сигнала
-        samplesAmt: int = _samplesPerPeriod(freq, sampleRate)
+        self.freq: float = freq
+        self.volume: float = volume
+        self.phase: Phase = phase
+        self.sampleRate: float = sampleRate
+        self.samplesAmt: int = _samplesPerPeriod(freq, sampleRate)
+        self.duration: float = _periodDuration(freq)
+
+    # generate 1 period of wave
+    @abstractmethod
+    def generate(self) -> NDArray[float64]: ...
+
+
+class SinGen(PeriodGenerator):
+    __slots__ = ()
+
+    def generate(self) -> NDArray[float64]:
         t: NDArray[float64]
-        if phase.angle:
-            t = linspace(phase.rad, _2PI + phase.rad, samplesAmt, False, dtype=float64)
+        if self.phase:
+            t = linspace(self.phase.rad, _2PI + self.phase.rad, self.samplesAmt, False, dtype=float64)
         else:
-            t = linspace(0.0, _2PI, samplesAmt, False, dtype=float64)
+            t = linspace(0.0, _2PI, self.samplesAmt, False, dtype=float64)
         sin(t, t)
-        if volume != 1.0:
-            t *= volume
-        self.arr: NDArray[float64] = t
-        self.dur: float = _periodDuration(freq)
-        self.vol: float = volume
-        self.samplesAmt: int = samplesAmt
-
-    def __iter__(self) -> Self:
-        return self
-
-    def __next__(self) -> NDArray[float64]:
-        return self.arr
+        if self.volume != 1.0:
+            t *= self.volume
+        return t
 
 
-class SawGen:
-    __slots__ = ("arr", "dur", "samplesAmt")
+class SawGen(PeriodGenerator):
+    __slots__ = ("flip",)
 
     def __init__(
         self,
         freq: float,
         volume: float = 1.0,
         phase: Phase = Phase(),
-        sampleRate: float = F_DEFAULT_SAMPLE_RATE
+        sampleRate: float = F_DEFAULT_SAMPLE_RATE,
+        flip: bool = False
     ) -> None:
-        samplesAmt: int = _samplesPerPeriod(freq, sampleRate)
+        super().__init__(freq, volume, phase.addAngle(180.0), sampleRate)
+        self.flip: bool = flip
+
+    def generate(self) -> NDArray[float64]:
         t: NDArray[float64]
-        if phase.angle:
-            t = linspace(phase.norm, 1.0 + phase.norm, samplesAmt, False, dtype=float64)
+        if self.phase:
+            t = linspace(1.0 + self.phase.norm, self.phase.norm, self.samplesAmt, False, dtype=float64) if self.flip else linspace(self.phase.norm, 1.0 + self.phase.norm, self.samplesAmt, False, dtype=float64)
             t %= 1.0
             t *= 2.0
             t -= 1.0
         else:
-            t = linspace(-1.0, 1.0, samplesAmt, False, dtype=float64)
-        if volume != 1.0:
-            t *= volume
-        self.arr: NDArray[float64] = t
-        self.dur: float = _periodDuration(freq)
-        self.samplesAmt: int = samplesAmt
-
-    def __iter__(self) -> Self:
-        return self
-
-    def __next__(self) -> NDArray[float64]:
-        return self.arr
+            t = linspace(1.0, -1.0, self.samplesAmt, False, dtype=float64) if self.flip else linspace(-1.0, 1.0, self.samplesAmt, False, dtype=float64)
+        if self.volume != 1.0:
+            t *= self.volume
+        return t
 
 
-class TriGen:
-    __slots__ = ("arr", "dur", "samplesAmt")
+class TriGen(PeriodGenerator):
+    __slots__ = ()
 
-    def __init__(
-        self,
-        freq: float,
-        volume: float = 1.0,
-        phase: Phase = Phase(),
-        sampleRate: float = F_DEFAULT_SAMPLE_RATE
-    ) -> None:
-        samplesAmt: int = _samplesPerPeriod(freq, sampleRate)
+    def generate(self) -> NDArray[float64]:
         t: NDArray[float64]
-        if phase.angle:
-            t = linspace(phase.norm, 1.0 + phase.norm, samplesAmt, False, dtype=float64)
+        if self.phase:
+            t = linspace(self.phase.norm, 1.0 + self.phase.norm, self.samplesAmt, False, dtype=float64)
             t %= 1.0
             t -= 0.5
             abs(t, t)
             t *= 4.0
             t -= 1.0
         else:
-            t = linspace(-1.0, 1.0, samplesAmt, False, dtype=float64)
+            t = linspace(-1.0, 1.0, self.samplesAmt, False, dtype=float64)
             abs(t, t)
             t *= 2.0
             t -= 1.0
-        if volume != 1.0:
-            t *= volume
-        self.arr: NDArray[float64] = t
-        self.dur: float = _periodDuration(freq)
-        self.samplesAmt: int = samplesAmt
-
-    def __iter__(self) -> Self:
-        return self
-
-    def __next__(self) -> NDArray[float64]:
-        return self.arr
+        if self.volume != 1.0:
+            t *= self.volume
+        return t
 
 
 class Wave:
@@ -174,20 +173,39 @@ class Wave:
     @classmethod
     def generate(
         cls,
-        gClass: type[SinGen | SawGen | TriGen],
-        freq: float,
-        duration: float,
-        volume: float = 1.0,
-        phase: Phase = Phase(),
-        sampleRate: float = F_DEFAULT_SAMPLE_RATE
+        gen: PeriodGenerator,
+        duration: float
     ) -> Self:
-        samplesAmt: int = samplesTotal(duration, sampleRate)
+        samplesAmt: int = samplesForDuration(duration, gen.sampleRate)
         return cls(
             duration,
-            resize(
-                gClass(freq, volume, phase, sampleRate).arr,
-                samplesAmt
-            ),
+            resize(gen.generate(), samplesAmt),
             samplesAmt,
-            volume
+            gen.volume
         )
+
+    def inverted(self) -> Self:
+        # returns new instance
+        return type(self)(self.duration, -self.arr.copy(), self.samplesAmt, self.volume)
+
+    def summWaves(self, *w: Self) -> Self:
+        # returns new instance
+        # TODO compensate amplitude
+        grW: Self = max(self, *w, key=_keyMaxWave)
+        grArr: NDArray[float64] = grW.arr.copy()
+        if grW is not self:
+            grArr[0:self.samplesAmt] += self.arr
+        for wave in w:
+            if grW is not wave:
+                grArr[0:wave.samplesAmt] += wave.arr
+        return type(self)(grW.duration, grArr, grW.samplesAmt, grW.volume)
+
+    def amplitudeModulation(self, w: Self) -> Self:
+        # TODO different lengths of arrays -> ValueError
+        newArr: NDArray[float64] = self.arr.copy()
+        newArr *= w.arr
+        return type(self)(self.duration, newArr, self.samplesAmt, self.volume)
+
+
+def _keyMaxWave(w: Wave) -> int:
+    return w.samplesAmt
