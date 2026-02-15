@@ -1,12 +1,11 @@
-from typing import Final, Any
+from typing import Final, Self, Any
 from argparse import ArgumentParser
 from pathlib import Path
 from json import load
 
 
 # частота дискретизации (кол-во сэмплов в 1 секунде)
-DEFAULT_SAMPLE_RATE: Final[int] = 44100
-F_DEFAULT_SAMPLE_RATE: Final[float] = 44100.0
+_DEFAULT_SAMPLE_RATE: Final[int] = 44100
 _SAMPLE_RATES: tuple[int, ...] = (
     8000,           # 8000 Hz: telephony, voice calls (adequate for speech)
     16000,          # 16000 Hz: VoIP, video conferencing (better voice quality)
@@ -28,14 +27,16 @@ class _Config:
     __slots__ = ("_confFile", "sampleRate", "sampleRateF", "sampleTime", "bitDepth", "sampleWidth", "maxAmplitude", "minAmplitude")
 
     def __init__(self, confFile: Path) -> None:
-        self._confFile: Path = confFile
-        with open(confFile, "tr", -1, "utf_8") as f:
+        self._confFile: Final[Path] = confFile
+
+    def initialize(self) -> Self:
+        with open(self._confFile, "tr", -1, "utf_8") as f:
             conf: dict[str, Any] = load(f)
 
         # частота дискретизации (семплирования)
         # довольно фундаментальная штука
         # при изменении скорее всего понадобится перезапускать приложение
-        if (v := conf.get("SAMPLE_RATE", DEFAULT_SAMPLE_RATE)) not in _SAMPLE_RATES:
+        if (v := conf.get("SAMPLE_RATE", _DEFAULT_SAMPLE_RATE)) not in _SAMPLE_RATES:
             raise ValueError(f"Invalid sample rate -> {v}")
         self.sampleRate: int = v
         self.sampleRateF: float = float(v)
@@ -52,13 +53,11 @@ class _Config:
         # крайние значенния амплитуды для указанной глубины
         self.maxAmplitude: float = float((2 ** (self.bitDepth - 1)) - 1)
         self.minAmplitude: float = (self.maxAmplitude + 1.0) * -1.0
-
-    def reInit(self) -> None:
-        self.__init__(self._confFile)
+        return self
 
 
 _argp: ArgumentParser = ArgumentParser()
 _argp.add_argument("-c", "--config", metavar="", help="config file path")
 _args = _argp.parse_args()
 
-CONFIG: Final[_Config] = _Config(Path(_args.config) if _args.config else _DEFAULT_CONFIG_PATH)
+CONFIG: Final[_Config] = _Config(Path(_args.config) if _args.config else _DEFAULT_CONFIG_PATH).initialize()
