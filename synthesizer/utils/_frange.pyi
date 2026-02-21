@@ -1,0 +1,9 @@
+from typing import overload, Iterable
+
+
+@overload
+def frange(stop: float, /) -> Iterable[float]: ...
+@overload
+def frange(start: float, stop: float, /) -> Iterable[float]: ...
+@overload
+def frange(start: float, stop: float, step: float, /) -> Iterable[float]: ...
